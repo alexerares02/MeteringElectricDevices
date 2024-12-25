@@ -1,0 +1,192 @@
+services:
+  reverse-proxy:
+    image: traefik:2.10
+    command:
+      - --api.insecure=true
+      - --providers.docker
+      - --accesslog=true
+      - --accesslog.filepath=/var/log/traefik/access.log
+      - --log.level=DEBUG
+      - --entrypoints.web.address=:80
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - traefik_logs:/var/log/traefik
+    networks:
+      - my_network
+
+
+  user_db:
+    image: mysql:latest
+    container_name: user_db
+    restart: always
+    environment:
+      MYSQL_DATABASE: users
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "3307:3306"
+    volumes:
+      - user_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - my_network
+
+  device_db:
+    image: mysql:latest
+    container_name: device_db
+    restart: always
+    environment:
+      MYSQL_DATABASE: devices
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "3308:3306"
+    volumes:
+      - device_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - my_network
+
+  monitoring_db:
+    image: mysql:latest
+    container_name: monitoring_db
+    restart: always
+    environment:
+      MYSQL_DATABASE: monitoring
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "3309:3306"
+    volumes:
+      - monitoring_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - my_network
+
+  userapp:
+    image: userapp
+    #container_name: user_app
+    depends_on:
+      user_db:
+        condition: service_healthy
+      deviceapp:
+        condition: service_started
+    # ports:
+    #   - "8080:8080"
+    environment:
+      DB_HOST: user_db
+      DB_PORT: 3306
+      DB_NAME: users
+      DB_USER: root
+      DB_PASSWORD: root
+    networks:
+      - my_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.userapp.rule=Host(`userapp.localhost`) || PathPrefix(`/userapp`)"
+      - "traefik.http.services.userapp.loadbalancer.server.port=8080"
+
+  chatapp:
+    #container_name: user_app
+    image: chatapp
+    depends_on:
+      userapp:
+        condition: service_started
+    # ports:
+    #   - "8080:8080"
+    networks:
+      - my_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chatapp.rule=Host(`chatapp.localhost`)"
+      - "traefik.http.services.chatapp.loadbalancer.server.port=8083"
+
+
+  deviceapp:
+    image: deviceapp
+    # container_name: device_app
+    depends_on:
+      device_db:
+        condition: service_healthy
+    # ports:
+    #   - "8081:8081"
+    environment:
+      DB_HOST: device_db
+      DB_PORT: 3306
+      DB_NAME: devices
+      DB_USER: root
+      DB_PASSWORD: root
+    networks:
+      - my_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.deviceapp.rule=Host(`deviceapp.localhost`)"
+      - "traefik.http.services.deviceapp.loadbalancer.server.port=8081"
+
+
+  monitoringapp:
+    image: monitoringapp
+    # container_name: monitoring_app
+    depends_on:
+      monitoring_db:
+        condition: service_healthy
+    # ports:
+    #   - "8082:8082"
+    environment:
+      DB_HOST: monitoring_db
+      DB_PORT: 3306
+      DB_NAME: monitoring
+      DB_USER: root
+      DB_PASSWORD: root
+    networks:
+      - my_network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.monitoringapp.rule=Host(`monitoringapp.localhost`)"
+      - "traefik.http.services.monitoringapp.loadbalancer.server.port=8082"
+
+
+  frontend:
+      build:
+        context: ./frontend_microservices/microservices-frontend
+      ports:
+        - "5173:80"
+      networks:
+        - my_network
+
+  rabbitmq:
+      image: rabbitmq
+      container_name: rabbitmq
+      ports:
+        - "15672:15672" 
+        - "5672:5672" 
+      environment:
+        RABBITMQ_DEFAULT_USER: guest
+        RABBITMQ_DEFAULT_PASS: guest
+      networks:
+        - my_network
+
+volumes:
+  user_db_data:
+  device_db_data:
+  monitoring_db_data:
+  traefik_logs:
+
+networks:
+  my_network:
+    driver: bridge
